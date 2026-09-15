@@ -7,12 +7,12 @@ import io
 
 st.set_page_config(page_title="Gộp File Excel", layout="wide")
 
-st.title("Hệ thống gộp file Excel")
-st.write("Tải lên nhiều file Excel có cùng cấu trúc để gộp thành một file duy nhất.")
+st.title("Hệ thống gộp nhiều file Excel")
+st.write("Hỗ trợ cấu hình hàng tiêu đề (Header) và hàng bắt đầu lấy dữ liệu riêng cho từng file.")
 
-# 1. Upload nhiều file
+# 1. Tải lên danh sách file
 uploaded_files = st.file_uploader(
-    "Chọn các file Excel (.xlsx, .xls)", 
+    "Chọn các file Excel cần gộp (.xlsx, .xls):", 
     type=["xlsx", "xls"], 
     accept_multiple_files=True
 )
@@ -20,93 +20,125 @@ uploaded_files = st.file_uploader(
 if uploaded_files:
     st.info(f"Đã tải lên {len(uploaded_files)} file.")
     
-    # Đọc nhanh file đầu tiên để xem cấu trúc và số sheet
+    # Đọc nhanh danh sách sheet từ file đầu tiên
     first_file = uploaded_files[0]
     excel_obj = pd.ExcelFile(first_file)
     sheet_names = excel_obj.sheet_names
     
-    col_cfg1, col_cfg2 = st.columns(2)
-    with col_cfg1:
+    col_opt1, col_opt2 = st.columns(2)
+    with col_opt1:
         selected_sheet = st.selectbox("Chọn Sheet cần lấy dữ liệu:", sheet_names, index=0)
-    with col_cfg2:
+    with col_opt2:
         add_source_col = st.checkbox("Thêm cột tên file nguồn vào kết quả", value=True)
+    
+    # 2. Lựa chọn chế độ cấu hình dòng
+    st.subheader("Tùy chọn cấu hình dòng")
+    config_mode = st.radio(
+        "Chế độ cấu hình:",
+        options=["Cấu hình riêng cho từng file", "Áp dụng chung cùng một vị trí dòng cho tất cả file"],
+        index=0,
+        horizontal=True
+    )
+    
+    file_configs = {}
 
-    # Đọc bản xem trước thô của file đầu tiên (20 dòng đầu)
-    raw_preview = pd.read_excel(first_file, sheet_name=selected_sheet, header=None, nrows=20)
-    
-    # Hiển thị số dòng tương ứng với số hàng trên Excel (1-based index)
-    preview_display = raw_preview.copy()
-    preview_display.index = [f"Dòng {i + 1}" for i in range(len(preview_display))]
-    
-    st.subheader("Xem trước file đầu tiên (Để xác định số dòng):")
-    st.dataframe(preview_display, use_container_width=True)
-    
-    # 2. Tuỳ chọn dòng Header và dòng bắt đầu lấy dữ liệu
-    col_input1, col_input2, col_input3 = st.columns(3)
-    with col_input1:
-        header_row = st.number_input(
-            "Vị trí hàng là Header (tiêu đề cột):", 
-            min_value=1, 
-            max_value=100, 
-            value=1, 
-            step=1,
-            help="Số thứ tự dòng chứa tên các cột (theo giao diện Excel, bắt đầu từ 1)"
-        )
-    with col_input2:
-        data_start_row = st.number_input(
-            "Vị trí hàng bắt đầu lấy dữ liệu:", 
-            min_value=header_row + 1, 
-            max_value=200, 
-            value=header_row + 1, 
-            step=1,
-            help="Số thứ tự dòng chứa bản ghi đầu tiên (thường là ngay sau dòng header)"
-        )
-    with col_input3:
-        drop_empty = st.checkbox("Loại bỏ các dòng hoàn toàn trống", value=True)
+    if config_mode == "Áp dụng chung cùng một vị trí dòng cho tất cả file":
+        # Xem trước file đầu tiên
+        raw_preview = pd.read_excel(first_file, sheet_name=selected_sheet, header=None, nrows=15)
+        raw_preview.index = [f"Dòng {i + 1}" for i in range(len(raw_preview))]
+        st.write("Xem trước file mẫu đầu tiên:")
+        st.dataframe(raw_preview, use_container_width=True)
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            common_header = st.number_input("Hàng là Header (tiêu đề cột):", min_value=1, max_value=100, value=1, step=1)
+        with c2:
+            common_start = st.number_input("Hàng bắt đầu có dữ liệu:", min_value=common_header + 1, max_value=200, value=common_header + 1, step=1)
+            
+        for f in uploaded_files:
+            file_configs[f.name] = {"header_row": common_header, "data_start_row": common_start}
 
-    # 3. Nút thực hiện gộp dữ liệu
+    else:
+        st.write("Thiết lập dòng tiêu đề và dòng bắt đầu dữ liệu cho từng file:")
+        
+        for idx, f in enumerate(uploaded_files):
+            with st.expander(f"📄 File {idx + 1}: {f.name}", expanded=(idx == 0)):
+                # Đọc 12 dòng đầu của chính file đó để người dùng nhìn trực quan
+                try:
+                    df_prev = pd.read_excel(f, sheet_name=selected_sheet, header=None, nrows=12)
+                    df_prev.index = [f"Dòng {i + 1}" for i in range(len(df_prev))]
+                    st.caption("12 dòng đầu của file này (theo số thứ tự dòng trên Excel):")
+                    st.dataframe(df_prev, use_container_width=True)
+                except Exception as ex:
+                    st.warning(f"Không thể tải xem trước file này: {ex}")
+                
+                # Ô nhập riêng cho từng file
+                col_h, col_d = st.columns(2)
+                with col_h:
+                    h_val = st.number_input(
+                        f"Hàng Header (File: {f.name})",
+                        min_value=1,
+                        max_value=100,
+                        value=1,
+                        step=1,
+                        key=f"header_{idx}"
+                    )
+                with col_d:
+                    d_val = st.number_input(
+                        f"Hàng bắt đầu lấy dữ liệu (File: {f.name})",
+                        min_value=h_val + 1,
+                        max_value=200,
+                        value=h_val + 1,
+                        step=1,
+                        key=f"start_{idx}"
+                    )
+                
+                file_configs[f.name] = {"header_row": h_val, "data_start_row": d_val}
+
+    drop_empty = st.checkbox("Loại bỏ các dòng dữ liệu hoàn toàn trống", value=True)
+
+    # 3. Tiến hành gộp
     if st.button("Tiến hành gộp dữ liệu", type="primary"):
         merged_dfs = []
         errors = []
-        
         progress_bar = st.progress(0)
         
         for idx, file in enumerate(uploaded_files):
             try:
-                # Đọc file không dùng header để tự cắt theo chỉ số dòng
+                cfg = file_configs[file.name]
+                h_row = cfg["header_row"]
+                d_row = cfg["data_start_row"]
+                
+                # Đọc toàn bộ file thô
                 df_raw = pd.read_excel(file, sheet_name=selected_sheet, header=None)
                 
-                # Kiểm tra số lượng dòng của file
-                if len(df_raw) < data_start_row - 1:
-                    errors.append(f"File '{file.name}' không đủ số dòng dữ liệu.")
+                if len(df_raw) < d_row - 1:
+                    errors.append(f"File '{file.name}' có số dòng ít hơn hàng bắt đầu dữ liệu ({d_row}).")
                     continue
                 
-                # Lấy tiêu đề cột từ dòng header được chỉ định
-                header_series = df_raw.iloc[header_row - 1]
+                # Lấy tên cột từ dòng header đã chọn
+                header_series = df_raw.iloc[h_row - 1]
                 cols = []
-                for col_idx, val in enumerate(header_series):
+                for c_idx, val in enumerate(header_series):
                     if pd.isna(val) or str(val).strip() == "":
-                        cols.append(f"Cot_{col_idx + 1}")
+                        cols.append(f"Cot_{c_idx + 1}")
                     else:
                         cols.append(str(val).strip())
                 
-                # Lấy phần dữ liệu từ data_start_row trở đi
-                df_data = df_raw.iloc[data_start_row - 1:].copy()
+                # Cắt phần dữ liệu từ d_row trở đi
+                df_data = df_raw.iloc[d_row - 1:].copy()
                 df_data.columns = cols
                 
-                # Tùy chọn thêm cột tên file
                 if add_source_col:
                     df_data.insert(0, "Tên_File_Nguồn", file.name)
                 
                 if drop_empty:
-                    # Bỏ các dòng rỗng
-                    subset_check = cols
-                    df_data = df_data.dropna(how="all", subset=subset_check)
-                
+                    df_data = df_data.dropna(how="all", subset=cols)
+                    
                 merged_dfs.append(df_data)
             except Exception as e:
-                errors.append(f"Lỗi khi đọc file '{file.name}': {str(e)}")
-            
+                errors.append(f"Lỗi tại file '{file.name}': {str(e)}")
+                
             progress_bar.progress((idx + 1) / len(uploaded_files))
             
         if errors:
@@ -115,12 +147,12 @@ if uploaded_files:
                 
         if merged_dfs:
             final_df = pd.concat(merged_dfs, ignore_index=True)
-            st.success(f"Gộp thành công {len(merged_dfs)} file! Tổng cộng: {len(final_df)} dòng dữ liệu.")
+            st.success(f"Đã gộp thành công {len(merged_dfs)}/{len(uploaded_files)} file. Tổng số dòng dữ liệu: {len(final_df)}.")
             
-            st.subheader("Kết quả dữ liệu sau khi gộp:")
-            st.dataframe(final_df.head(100), use_container_width=True)
+            st.subheader("Xem trước kết quả sau khi gộp:")
+            st.dataframe(final_df.head(50), use_container_width=True)
             
-            # Xuất file Excel để tải xuống
+            # Xuất file kết quả
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
                 final_df.to_excel(writer, index=False, sheet_name="Merged_Data")
@@ -129,6 +161,6 @@ if uploaded_files:
             st.download_button(
                 label="📥 Tải file Excel đã gộp (.xlsx)",
                 data=output,
-                file_name="Ket_qua_gop.xlsx",
+                file_name="File_Gop_Ket_Qua.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
